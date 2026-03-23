@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Focus Timer</title>
+  <style>
+    *,
+    *::before,
+    *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      background: #000;
+      color: #fff;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+      font-size: 13px;
+      line-height: 1.4;
+      height: 100%;
+    }
+
+    /* --- Auth Overlay --- */
+    #auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    #auth-overlay input {
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+      color: #fff;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 0;
+      width: 200px;
+      text-align: center;
+      outline: none;
+    }
+
+    #auth-overlay input::placeholder {
+      color: rgba(255, 255, 255, 0.25);
+    }
+
+    /* --- App --- */
+    #app {
+      display: none;
+      height: 100vh;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 48px;
+      padding: 32px;
+    }
+
+    /* --- Timer Display --- */
+    #timer-display {
+      font-size: clamp(40px, 12vw, 80px);
+      font-weight: 300;
+      letter-spacing: 0.04em;
+      color: rgba(255, 255, 255, 0.2);
+      transition: color 0.3s;
+      font-variant-numeric: tabular-nums;
+      user-select: none;
+    }
+
+    #timer-display.running {
+      color: #fff;
+    }
+
+    /* --- Task Label --- */
+    #task-label {
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.2);
+      height: 16px;
+      transition: color 0.3s;
+    }
+
+    #task-label.active {
+      color: rgba(255, 255, 255, 0.5);
+    }
+
+    /* --- Controls --- */
+    .controls {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 24px;
+    }
+
+    .task-buttons {
+      display: flex;
+      gap: 2px;
+    }
+
+    .task-buttons button {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: rgba(255, 255, 255, 0.4);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 6px 18px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      letter-spacing: 0.04em;
+    }
+
+    .task-buttons button:hover {
+      color: rgba(255, 255, 255, 0.7);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .task-buttons button.active {
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.6);
+    }
+
+    .task-buttons button:disabled {
+      opacity: 0.2;
+      cursor: default;
+    }
+
+    /* --- Action Button --- */
+    #action-btn {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      color: rgba(255, 255, 255, 0.5);
+      font-family: inherit;
+      font-size: 12px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 10px 40px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    #action-btn:hover {
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.5);
+    }
+
+    #action-btn:disabled {
+      opacity: 0.15;
+      cursor: default;
+    }
+
+    #action-btn.stop {
+      border-color: rgba(255, 255, 255, 0.5);
+      color: rgba(255, 255, 255, 0.8);
+    }
+
+    /* --- State Message --- */
+    .state-msg {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: rgba(255, 255, 255, 0.35);
+      font-size: 14px;
+      letter-spacing: 0.05em;
+      pointer-events: none;
+    }
+
+    /* --- Nav --- */
+    #nav {
+      position: fixed;
+      bottom: 24px;
+      right: 32px;
+    }
+
+    #nav a {
+      color: rgba(255, 255, 255, 0.15);
+      text-decoration: none;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      transition: color 0.15s;
+    }
+
+    #nav a:hover {
+      color: rgba(255, 255, 255, 0.4);
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Auth Overlay -->
+  <div id="auth-overlay">
+    <form id="auth-form">
+      <input type="password" id="auth-input" placeholder="token" autocomplete="off">
+    </form>
+  </div>
+
+  <!-- Loading / Error -->
+  <div class="state-msg" id="state-msg" style="display:none"></div>
+
+  <!-- App -->
+  <div id="app">
+    <!-- Timer -->
+    <div style="text-align:center">
+      <div id="timer-display">00:00:00</div>
+      <div id="task-label">&nbsp;</div>
+    </div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <div class="task-buttons" id="task-buttons"></div>
+      <button id="action-btn" disabled>start</button>
+    </div>
+  </div>
+
+  <!-- Nav Link to Dashboard -->
+  <div id="nav">
+    <a href="dashboard.html">dashboard →</a>
+  </div>
+
+  <script>
+    // ============================================================
+    // CONFIG
+    // ============================================================
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbwehh9xBppwOCKhcu0PwizZZGw1S55nTZDWjwYqv4u4ne386i2tnRzFvanmySF9UOqn/exec";
+    const TASKS = ["A", "B", "C", "D"];
+
+    // ============================================================
+    // STATE
+    // ============================================================
+    let TOKEN = "";
+    let selectedTask = null;
+    let isRunning = false;
+    let startTimestamp = 0;   // ms when current session started
+    let timerInterval = null;
+
+    // ============================================================
+    // AUTH
+    // ============================================================
+    (function initAuth() {
+      const stored = localStorage.getItem("focus_dashboard_token");
+      if (stored) {
+        TOKEN = stored;
+        showApp();
+      } else {
+        document.getElementById("auth-overlay").style.display = "flex";
+      }
+    })();
+
+    document.getElementById("auth-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      const val = document.getElementById("auth-input").value.trim();
+      if (!val) return;
+      TOKEN = val;
+      localStorage.setItem("focus_dashboard_token", val);
+      showApp();
+    });
+
+    function showApp() {
+      document.getElementById("auth-overlay").style.display = "none";
+      document.getElementById("app").style.display = "flex";
+      buildTaskButtons();
+      loadCurrentState();
+    }
+
+    // ============================================================
+    // TASK BUTTONS
+    // ============================================================
+    function buildTaskButtons() {
+      const container = document.getElementById("task-buttons");
+      TASKS.forEach(function (t) {
+        const btn = document.createElement("button");
+        btn.textContent = t;
+        btn.dataset.task = t;
+        btn.addEventListener("click", function () {
+          if (isRunning) return; // Can't switch tasks while running
+          selectTask(t);
+        });
+        container.appendChild(btn);
+      });
+    }
+
+    function selectTask(taskId) {
+      selectedTask = taskId;
+      const btns = document.querySelectorAll("#task-buttons button");
+      btns.forEach(function (b) {
+        b.className = b.dataset.task === taskId ? "active" : "";
+      });
+      document.getElementById("action-btn").disabled = false;
+    }
+
+    function lockTaskButtons(lock) {
+      const btns = document.querySelectorAll("#task-buttons button");
+      btns.forEach(function (b) {
+        b.disabled = lock;
+      });
+    }
+
+    // ============================================================
+    // TIMER DISPLAY
+    // ============================================================
+    function formatTime(ms) {
+      if (ms < 0) ms = 0;
+      const totalSec = Math.floor(ms / 1000);
+      const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
+      const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
+      const s = String(totalSec % 60).padStart(2, "0");
+      return h + ":" + m + ":" + s;
+    }
+
+    function startTimerDisplay() {
+      const display = document.getElementById("timer-display");
+      display.classList.add("running");
+
+      if (timerInterval) clearInterval(timerInterval);
+      timerInterval = setInterval(function () {
+        const elapsed = Date.now() - startTimestamp;
+        display.textContent = formatTime(elapsed);
+      }, 200);
+    }
+
+    function stopTimerDisplay() {
+      if (timerInterval) {
+        clearInterval(timerInterval);
+        timerInterval = null;
+      }
+      const display = document.getElementById("timer-display");
+      display.classList.remove("running");
+      display.textContent = "00:00:00";
+    }
+
+    function updateTaskLabel(taskId, running) {
+      const label = document.getElementById("task-label");
+      if (running && taskId) {
+        label.textContent = "TASK " + taskId;
+        label.classList.add("active");
+      } else {
+        label.innerHTML = "&nbsp;";
+        label.classList.remove("active");
+      }
+    }
+
+    // ============================================================
+    // ACTION BUTTON
+    // ============================================================
+    document.getElementById("action-btn").addEventListener("click", async function () {
+      const btn = this;
+      btn.disabled = true;
+
+      if (!isRunning) {
+        // --- START ---
+        const result = await apiCallWithResult("recordEvent", { taskId: selectedTask, action_type: "START" });
+        if (result) {
+          isRunning = true;
+          // Use GAS-returned timestamp to avoid network latency drift
+          startTimestamp = result.timestamp || Date.now();
+          btn.textContent = "stop";
+          btn.classList.add("stop");
+          btn.disabled = false;
+          lockTaskButtons(true);
+          startTimerDisplay();
+          updateTaskLabel(selectedTask, true);
+        } else {
+          btn.disabled = false;
+        }
+      } else {
+        // --- STOP ---
+        const result = await apiCallWithResult("recordEvent", { taskId: selectedTask, action_type: "STOP" });
+        if (result) {
+          isRunning = false;
+          startTimestamp = 0;
+          btn.textContent = "start";
+          btn.classList.remove("stop");
+          btn.disabled = false;
+          lockTaskButtons(false);
+          stopTimerDisplay();
+          updateTaskLabel(selectedTask, false);
+        } else {
+          btn.disabled = false;
+        }
+      }
+    });
+
+    // ============================================================
+    // LOAD CURRENT STATE (on page load)
+    // ============================================================
+    async function loadCurrentState() {
+      showStateMsg("·");
+      try {
+        const res = await fetch(GAS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({ action: "getCurrentState", token: TOKEN })
+        });
+
+        if (!res.ok) {
+          showStateMsg("ERR: " + res.status);
+          return;
+        }
+
+        const json = await res.json();
+        hideStateMsg();
+
+        if (!json.ok) {
+          showStateMsg("ERR: " + (json.error || "UNKNOWN"));
+          return;
+        }
+
+        if (json.state && json.state.action === "START") {
+          // Resuming an active session
+          selectedTask = json.state.taskId;
+          startTimestamp = json.state.timestamp;
+          isRunning = true;
+
+          selectTask(selectedTask);
+          lockTaskButtons(true);
+
+          const btn = document.getElementById("action-btn");
+          btn.textContent = "stop";
+          btn.classList.add("stop");
+          btn.disabled = false;
+
+          startTimerDisplay();
+          updateTaskLabel(selectedTask, true);
+        }
+      } catch (e) {
+        // Network error on load — still usable, just can't restore state
+        hideStateMsg();
+      }
+    }
+
+    // ============================================================
+    // API HELPERS
+    // ============================================================
+    // Returns the full response object (or null on failure)
+    async function apiCallWithResult(action, extra) {
+      const body = Object.assign({ action: action, token: TOKEN }, extra || {});
+      try {
+        const res = await fetch(GAS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify(body)
+        });
+        if (!res.ok) {
+          showStateMsg("ERR: " + res.status);
+          setTimeout(hideStateMsg, 3000);
+          return null;
+        }
+        const json = await res.json();
+        if (!json.ok) {
+          showStateMsg("ERR: " + (json.error || "UNKNOWN"));
+          setTimeout(hideStateMsg, 3000);
+          return null;
+        }
+        return json;
+      } catch (e) {
+        showStateMsg("ERR: NETWORK");
+        setTimeout(hideStateMsg, 3000);
+        return null;
+      }
+    }
+
+    // Convenience boolean wrapper
+    async function apiCall(action, extra) {
+      return (await apiCallWithResult(action, extra)) !== null;
+    }
+
+    // ============================================================
+    // STATE MESSAGES
+    // ============================================================
+    function showStateMsg(text) {
+      const el = document.getElementById("state-msg");
+      el.textContent = text;
+      el.style.display = "flex";
+    }
+    function hideStateMsg() {
+      document.getElementById("state-msg").style.display = "none";
+    }
+  </script>
+</body>
+
+</html>

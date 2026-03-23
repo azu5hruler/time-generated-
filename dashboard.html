@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Focus Dashboard</title>
+  <style>
+    *,
+    *::before,
+    *::after {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      background: #000;
+      color: #fff;
+      font-family: "SF Mono", "Fira Code", "Cascadia Code", "Consolas", monospace;
+      font-size: 13px;
+      line-height: 1.4;
+      height: 100%;
+    }
+
+    /* --- Auth Overlay --- */
+    #auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+
+    #auth-overlay input {
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.3);
+      color: #fff;
+      font-family: inherit;
+      font-size: 14px;
+      padding: 8px 0;
+      width: 200px;
+      text-align: center;
+      outline: none;
+    }
+
+    #auth-overlay input::placeholder {
+      color: rgba(255, 255, 255, 0.25);
+    }
+
+    /* --- App Shell --- */
+    #app {
+      display: none;
+      padding: 32px 40px;
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    /* --- Controls --- */
+    .controls {
+      display: flex;
+      gap: 48px;
+      margin-bottom: 48px;
+      flex-wrap: wrap;
+    }
+
+    .control-group {
+      display: flex;
+      gap: 2px;
+    }
+
+    .control-group button {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      color: rgba(255, 255, 255, 0.4);
+      font-family: inherit;
+      font-size: 12px;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: color 0.15s, border-color 0.15s;
+      letter-spacing: 0.04em;
+    }
+
+    .control-group button:hover {
+      color: rgba(255, 255, 255, 0.7);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    .control-group button.active {
+      color: #fff;
+      border-color: rgba(255, 255, 255, 0.6);
+    }
+
+    /* --- Sections --- */
+    .section {
+      margin-bottom: 56px;
+    }
+
+    .section-label {
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: rgba(255, 255, 255, 0.25);
+      margin-bottom: 20px;
+    }
+
+    /* --- Heatmap --- */
+    #heatmap-container {
+      overflow-x: auto;
+    }
+
+    #heatmap-container svg {
+      display: block;
+    }
+
+    /* --- Tooltip --- */
+    .tooltip {
+      position: fixed;
+      pointer-events: none;
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font-family: inherit;
+      font-size: 11px;
+      padding: 4px 8px;
+      white-space: nowrap;
+      z-index: 100;
+      opacity: 0;
+      transition: opacity 0.12s;
+    }
+
+    .tooltip.visible {
+      opacity: 1;
+    }
+
+    /* --- Bar Chart --- */
+    #chart-container svg {
+      display: block;
+      width: 100%;
+    }
+
+    /* --- Loading / Error --- */
+    .state-msg {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 120px;
+      color: rgba(255, 255, 255, 0.35);
+      font-size: 14px;
+      letter-spacing: 0.05em;
+    }
+
+    /* --- Mobile --- */
+    @media (max-width: 600px) {
+      #app {
+        padding: 20px 16px;
+      }
+      .controls {
+        gap: 16px;
+        margin-bottom: 32px;
+      }
+      .control-group button {
+        padding: 8px 10px;
+        font-size: 11px;
+        min-height: 36px;
+      }
+      .section {
+        margin-bottom: 40px;
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <!-- Auth Overlay -->
+  <div id="auth-overlay">
+    <form id="auth-form">
+      <input type="password" id="auth-input" placeholder="token" autocomplete="off">
+    </form>
+  </div>
+
+  <!-- App -->
+  <div id="app">
+    <!-- Controls -->
+    <div class="controls">
+      <div class="control-group" id="task-buttons"></div>
+      <div class="control-group" id="period-buttons"></div>
+    </div>
+
+    <!-- Heatmap -->
+    <div class="section">
+      <div class="section-label">Heatmap</div>
+      <div id="heatmap-container">
+        <div class="state-msg" id="heatmap-state">·</div>
+      </div>
+    </div>
+
+    <!-- Bar Chart -->
+    <div class="section">
+      <div class="section-label">Chart</div>
+      <div id="chart-container">
+        <div class="state-msg" id="chart-state">·</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tooltip -->
+  <div class="tooltip" id="tooltip"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+  <script>
+    // ============================================================
+    // CONFIG — Edit these values
+    // ============================================================
+    const GAS_URL = "https://script.google.com/macros/s/AKfycbwehh9xBppwOCKhcu0PwizZZGw1S55nTZDWjwYqv4u4ne386i2tnRzFvanmySF9UOqn/exec";
+    const TASKS = ["A", "B", "C", "D"];
+
+    // ============================================================
+    // STATE
+    // ============================================================
+    let TOKEN = "";
+    let selectedTask = "ALL";
+    let selectedPeriod = "7D";
+    let cachedData = null;
+
+    // ============================================================
+    // AUTH
+    // ============================================================
+    (function initAuth() {
+      const stored = localStorage.getItem("focus_dashboard_token");
+      if (stored) {
+        TOKEN = stored;
+        showApp();
+      } else {
+        document.getElementById("auth-overlay").style.display = "flex";
+      }
+    })();
+
+    document.getElementById("auth-form").addEventListener("submit", function (e) {
+      e.preventDefault();
+      const val = document.getElementById("auth-input").value.trim();
+      if (!val) return;
+      TOKEN = val;
+      localStorage.setItem("focus_dashboard_token", val);
+      showApp();
+    });
+
+    function showApp() {
+      document.getElementById("auth-overlay").style.display = "none";
+      document.getElementById("app").style.display = "block";
+      buildControls();
+      fetchAndRender();
+    }
+
+    // ============================================================
+    // CONTROLS
+    // ============================================================
+    function buildControls() {
+      const taskContainer = document.getElementById("task-buttons");
+      const periodContainer = document.getElementById("period-buttons");
+
+      const taskOptions = ["ALL", ...TASKS];
+      taskOptions.forEach(function (t) {
+        const btn = document.createElement("button");
+        btn.textContent = t;
+        btn.className = t === selectedTask ? "active" : "";
+        btn.addEventListener("click", function () {
+          selectedTask = t;
+          updateButtonStates(taskContainer, t);
+          renderFromCache();
+        });
+        taskContainer.appendChild(btn);
+      });
+
+      const periods = ["7D", "30D", "90D", "1Y"];
+      periods.forEach(function (p) {
+        const btn = document.createElement("button");
+        btn.textContent = p;
+        btn.className = p === selectedPeriod ? "active" : "";
+        btn.addEventListener("click", function () {
+          selectedPeriod = p;
+          updateButtonStates(periodContainer, p);
+          fetchAndRender();
+        });
+        periodContainer.appendChild(btn);
+      });
+    }
+
+    function updateButtonStates(container, activeValue) {
+      Array.from(container.children).forEach(function (btn) {
+        btn.className = btn.textContent === activeValue ? "active" : "";
+      });
+    }
+
+    // ============================================================
+    // DATE HELPERS
+    // ============================================================
+    function periodToDays(p) {
+      switch (p) {
+        case "7D": return 7;
+        case "30D": return 30;
+        case "90D": return 90;
+        case "1Y": return 365;
+        default: return 30;
+      }
+    }
+
+    function formatDate(d) {
+      const y = d.getUTCFullYear();
+      const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+      const day = String(d.getUTCDate()).padStart(2, "0");
+      return y + "-" + m + "-" + day;
+    }
+
+    function getDateRange() {
+      const days = periodToDays(selectedPeriod);
+      const end = new Date();
+      const start = new Date(end.getTime() - (days - 1) * 86400000);
+      return {
+        startDate: formatDate(start),
+        endDate: formatDate(end),
+        days: days
+      };
+    }
+
+    // ============================================================
+    // FETCH
+    // ============================================================
+    function setLoading() {
+      document.getElementById("heatmap-state").textContent = "·";
+      document.getElementById("heatmap-state").style.display = "flex";
+      document.getElementById("chart-state").textContent = "·";
+      document.getElementById("chart-state").style.display = "flex";
+      // Clear existing SVGs
+      const hsvg = document.querySelector("#heatmap-container svg");
+      const csvg = document.querySelector("#chart-container svg");
+      if (hsvg) hsvg.remove();
+      if (csvg) csvg.remove();
+    }
+
+    function setError(msg) {
+      document.getElementById("heatmap-state").textContent = msg;
+      document.getElementById("heatmap-state").style.display = "flex";
+      document.getElementById("chart-state").textContent = msg;
+      document.getElementById("chart-state").style.display = "flex";
+    }
+
+    async function fetchAndRender() {
+      setLoading();
+      const range = getDateRange();
+      try {
+        const res = await fetch(GAS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "text/plain" },
+          body: JSON.stringify({
+            action: "getDashboardData",
+            token: TOKEN,
+            startDate: range.startDate,
+            endDate: range.endDate
+          })
+        });
+        if (!res.ok) {
+          setError("ERR: " + res.status);
+          return;
+        }
+        const json = await res.json();
+        if (!json.ok) {
+          setError("ERR: " + (json.error || "UNKNOWN"));
+          return;
+        }
+        cachedData = json.data;
+        renderAll();
+      } catch (e) {
+        setError("ERR: NETWORK");
+      }
+    }
+
+    function renderFromCache() {
+      if (cachedData) renderAll();
+    }
+
+    function renderAll() {
+      renderHeatmap(cachedData.heatmap);
+      renderChart(cachedData.chart);
+    }
+
+    // ============================================================
+    // HEATMAP
+    // ============================================================
+    function renderHeatmap(heatmapData) {
+      document.getElementById("heatmap-state").style.display = "none";
+      const existing = document.querySelector("#heatmap-container svg");
+      if (existing) existing.remove();
+
+      const range = getDateRange();
+      const days = range.days;
+
+      // Build date -> seconds map
+      const dataMap = {};
+      heatmapData.forEach(function (d) { dataMap[d.date] = d.totalSeconds; });
+
+      // Generate all dates in range
+      const allDates = [];
+      const startD = new Date(range.startDate + "T00:00:00Z");
+      for (let i = 0; i < days; i++) {
+        const d = new Date(startD.getTime() + i * 86400000);
+        const ds = formatDate(d);
+        allDates.push({
+          date: ds,
+          dayOfWeek: d.getUTCDay(), // 0=Sun
+          seconds: dataMap[ds] || 0
+        });
+      }
+
+      const maxSeconds = d3.max(allDates, function (d) { return d.seconds; }) || 1;
+
+      // Cell sizing — smaller on mobile
+      const isMobile = window.innerWidth < 600;
+      const cellSize = isMobile ? 10 : 13;
+      const cellGap = isMobile ? 1 : 2;
+      const step = cellSize + cellGap;
+
+      // Day labels (Mon=1 ... Sun=0 remapped to Mon..Sun rows)
+      // Row mapping: Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
+      function dayToRow(dow) {
+        return dow === 0 ? 6 : dow - 1;
+      }
+
+      // Compute week columns
+      // First date's column = 0, then increment when Monday comes
+      let col = 0;
+      const cellData = [];
+      allDates.forEach(function (d, i) {
+        if (i > 0 && d.dayOfWeek === 1) col++;
+        cellData.push({
+          date: d.date,
+          seconds: d.seconds,
+          row: dayToRow(d.dayOfWeek),
+          col: col
+        });
+      });
+
+      const numCols = col + 1;
+      const dayLabelWidth = 24;
+      const svgW = dayLabelWidth + numCols * step;
+      const svgH = 7 * step;
+
+      const svg = d3.select("#heatmap-container")
+        .append("svg")
+        .attr("width", svgW)
+        .attr("height", svgH);
+
+      // Day labels
+      const dayLabels = ["M", "T", "W", "T", "F", "S", "S"];
+      svg.selectAll(".day-label")
+        .data(dayLabels)
+        .enter()
+        .append("text")
+        .attr("x", dayLabelWidth - 6)
+        .attr("y", function (d, i) { return i * step + cellSize - 2; })
+        .attr("text-anchor", "end")
+        .attr("fill", "rgba(255,255,255,0.2)")
+        .attr("font-size", "9px")
+        .attr("font-family", "inherit")
+        .text(function (d) { return d; });
+
+      // Cells
+      const tooltip = document.getElementById("tooltip");
+      svg.selectAll(".cell")
+        .data(cellData)
+        .enter()
+        .append("rect")
+        .attr("x", function (d) { return dayLabelWidth + d.col * step; })
+        .attr("y", function (d) { return d.row * step; })
+        .attr("width", cellSize)
+        .attr("height", cellSize)
+        .attr("fill", function (d) {
+          if (d.seconds === 0) return "rgba(255,255,255,0.05)";
+          const intensity = d.seconds / maxSeconds;
+          const opacity = 0.1 + intensity * 0.9;
+          return "rgba(255,255,255," + opacity.toFixed(3) + ")";
+        })
+        .style("cursor", "crosshair")
+        .on("mouseenter", function (event, d) {
+          const h = Math.floor(d.seconds / 3600);
+          const m = Math.floor((d.seconds % 3600) / 60);
+          tooltip.textContent = d.date + " \u2014 " + h + "h " + m + "m";
+          tooltip.classList.add("visible");
+        })
+        .on("mousemove", function (event) {
+          tooltip.style.left = (event.clientX + 12) + "px";
+          tooltip.style.top = (event.clientY - 8) + "px";
+        })
+        .on("mouseleave", function () {
+          tooltip.classList.remove("visible");
+        });
+    }
+
+    // ============================================================
+    // BAR CHART
+    // ============================================================
+    function renderChart(chartData) {
+      document.getElementById("chart-state").style.display = "none";
+      const existing = document.querySelector("#chart-container svg");
+      if (existing) existing.remove();
+
+      const range = getDateRange();
+      const days = range.days;
+      const useWeeks = days >= 90;
+
+      // Filter chart data by selected task
+      let filtered;
+      if (selectedTask === "ALL") {
+        filtered = chartData;
+      } else {
+        filtered = chartData.filter(function (d) { return d.taskId === selectedTask; });
+      }
+
+      // Group by date or week
+      let groupedData;
+      if (useWeeks) {
+        groupedData = groupByWeek(filtered, range);
+      } else {
+        groupedData = groupByDay(filtered, range);
+      }
+
+      // Determine tasks in data
+      const activeTasks = selectedTask === "ALL" ? TASKS.slice() : [selectedTask];
+
+      // Assign opacity per task for stacking
+      const taskOpacity = {};
+      activeTasks.forEach(function (t, i) {
+        taskOpacity[t] = selectedTask === "ALL"
+          ? 0.3 + (i / Math.max(activeTasks.length - 1, 1)) * 0.7
+          : 0.85;
+      });
+
+      // Prepare stacked data
+      // groupedData: [{ label, tasks: { A: sec, B: sec, ... } }, ...]
+      const margin = { top: 16, right: 16, bottom: 40, left: 52 };
+      const containerEl = document.getElementById("chart-container");
+      const containerW = Math.max(containerEl.clientWidth || window.innerWidth - 32, 160);
+      const width = Math.max(containerW - margin.left - margin.right, 120);
+      const isMobile = window.innerWidth < 600;
+      const height = isMobile ? 160 : 220;
+
+      const svg = d3.select("#chart-container")
+        .append("svg")
+        .attr("width", width + margin.left + margin.right)
+        .attr("height", height + margin.top + margin.bottom);
+
+      const g = svg.append("g")
+        .attr("transform", "translate(" + margin.left + "," + margin.top + ")");
+
+      // X scale
+      const labels = groupedData.map(function (d) { return d.label; });
+      const x = d3.scaleBand()
+        .domain(labels)
+        .range([0, width])
+        .padding(0.25);
+
+      // Y scale
+      const maxY = d3.max(groupedData, function (d) {
+        let total = 0;
+        activeTasks.forEach(function (t) { total += (d.tasks[t] || 0); });
+        return total;
+      }) || 1;
+      const yMax = Math.ceil(maxY / 3600) * 3600; // round up to nearest hour
+      const y = d3.scaleLinear()
+        .domain([0, yMax])
+        .range([height, 0]);
+
+      // Grid lines
+      const tickVals = [];
+      const hourStep = yMax <= 7200 ? 1800 : yMax <= 36000 ? 3600 : 7200;
+      for (let v = hourStep; v <= yMax; v += hourStep) {
+        tickVals.push(v);
+      }
+      g.selectAll(".grid-line")
+        .data(tickVals)
+        .enter()
+        .append("line")
+        .attr("x1", 0)
+        .attr("x2", width)
+        .attr("y1", function (d) { return y(d); })
+        .attr("y2", function (d) { return y(d); })
+        .attr("stroke", "rgba(255,255,255,0.07)")
+        .attr("stroke-width", 1);
+
+      // Y axis labels
+      g.selectAll(".y-label")
+        .data(tickVals)
+        .enter()
+        .append("text")
+        .attr("x", -8)
+        .attr("y", function (d) { return y(d) + 4; })
+        .attr("text-anchor", "end")
+        .attr("fill", "rgba(255,255,255,0.25)")
+        .attr("font-size", "10px")
+        .attr("font-family", "inherit")
+        .text(function (d) {
+          if (d >= 3600) return (d / 3600).toFixed(d % 3600 === 0 ? 0 : 1) + "h";
+          return (d / 60) + "m";
+        });
+
+      // X axis labels
+      const showEveryN = labels.length > 30 ? Math.ceil(labels.length / 20) : 1;
+      g.selectAll(".x-label")
+        .data(labels)
+        .enter()
+        .append("text")
+        .attr("x", function (d) { return x(d) + x.bandwidth() / 2; })
+        .attr("y", height + 20)
+        .attr("text-anchor", "middle")
+        .attr("fill", function (d, i) { return i % showEveryN === 0 ? "rgba(255,255,255,0.25)" : "transparent"; })
+        .attr("font-size", "9px")
+        .attr("font-family", "inherit")
+        .text(function (d) {
+          // Shorten label: "2026-03-15" -> "03-15"
+          return d.length > 5 ? d.slice(5) : d;
+        });
+
+      // Bars (stacked)
+      groupedData.forEach(function (gd) {
+        let cumY = 0;
+        activeTasks.forEach(function (t) {
+          const sec = gd.tasks[t] || 0;
+          if (sec === 0) return;
+          g.append("rect")
+            .attr("x", x(gd.label))
+            .attr("y", y(cumY + sec))
+            .attr("width", x.bandwidth())
+            .attr("height", y(cumY) - y(cumY + sec))
+            .attr("fill", "rgba(255,255,255," + taskOpacity[t].toFixed(2) + ")");
+          cumY += sec;
+        });
+      });
+    }
+
+    // ============================================================
+    // GROUPING HELPERS
+    // ============================================================
+    function groupByDay(data, range) {
+      const days = range.days;
+      const startD = new Date(range.startDate + "T00:00:00Z");
+      const groups = [];
+      const dateMap = {};
+
+      for (let i = 0; i < days; i++) {
+        const d = new Date(startD.getTime() + i * 86400000);
+        const ds = formatDate(d);
+        const obj = { label: ds, tasks: {} };
+        groups.push(obj);
+        dateMap[ds] = obj;
+      }
+
+      data.forEach(function (d) {
+        if (dateMap[d.date]) {
+          dateMap[d.date].tasks[d.taskId] = (dateMap[d.date].tasks[d.taskId] || 0) + d.seconds;
+        }
+      });
+
+      return groups;
+    }
+
+    function groupByWeek(data, range) {
+      const days = range.days;
+      const startD = new Date(range.startDate + "T00:00:00Z");
+      const weeks = [];
+      const weekMap = {};
+
+      for (let i = 0; i < days; i++) {
+        const d = new Date(startD.getTime() + i * 86400000);
+        const ds = formatDate(d);
+        // Week label = Monday of that week
+        const dow = d.getUTCDay();
+        const mondayOffset = dow === 0 ? -6 : 1 - dow;
+        const monday = new Date(d.getTime() + mondayOffset * 86400000);
+        const weekLabel = formatDate(monday);
+
+        if (!weekMap[weekLabel]) {
+          const obj = { label: weekLabel, tasks: {} };
+          weeks.push(obj);
+          weekMap[weekLabel] = obj;
+        }
+      }
+
+      data.forEach(function (d) {
+        const dd = new Date(d.date + "T00:00:00Z");
+        const dow = dd.getUTCDay();
+        const mondayOffset = dow === 0 ? -6 : 1 - dow;
+        const monday = new Date(dd.getTime() + mondayOffset * 86400000);
+        const weekLabel = formatDate(monday);
+        if (weekMap[weekLabel]) {
+          weekMap[weekLabel].tasks[d.taskId] = (weekMap[weekLabel].tasks[d.taskId] || 0) + d.seconds;
+        }
+      });
+
+      return weeks;
+    }
+
+    // ============================================================
+    // RESPONSIVE CHART RESIZE
+    // ============================================================
+    let resizeTimer;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        if (cachedData) {
+          renderChart(cachedData.chart);
+        }
+      }, 200);
+    });
+  </script>
+</body>
+
+</html>
